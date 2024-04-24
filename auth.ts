@@ -16,20 +16,34 @@ declare module "next-auth" {
 }
 
 export const { signIn, signOut, auth, handlers } = NextAuth({
+  pages: {
+    signIn: "/auth/login",
+    error: "/auth/error",
+  },
+  events: {
+    async linkAccount({ user }) {
+      await db.user.update({
+        where: { id: user.id },
+        data: { emailVerified: new Date() },
+      });
+    },
+  },
   callbacks: {
     // these callbacks will run whenever the action happend like forexample signIn will run after when user signIn and execute the code inside it.
-    // async signIn({ user }) {
-    //   if (!user.id) {
-    //     return false;
-    //   }
-    //   const existingUser = await getUserById(user.id);
-    //
-    //   if (!existingUser || !existingUser.emailVerified) {
-    //     return false;
-    //   }
-    //
-    //   return true;
-    // },
+
+    async signIn({ user, account }) {
+      if (account?.provider !== "credentials") return true;
+
+      if (!user || !user?.id) return false;
+
+      const existingUser = await getUserById(user.id);
+
+      if (!existingUser?.emailVerified) return false;
+
+      // TODO
+
+      return true;
+    },
     async session({ token, session }) {
       if (token.role && session.user) {
         session.user.role = token.role as UserRole;
