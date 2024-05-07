@@ -5,13 +5,19 @@ import authConfig from "./auth.config";
 import { db } from "./lib/db";
 import { getUserById } from "./data/user";
 import { UserRole } from "@prisma/client";
+import { getTwoFactorConfirmationByUserId } from "./data/two-factor-confirmation";
+import { getAccountByUserId } from "./data/account";
+
+export type ExtendedUser = {
+  role: UserRole;
+  isTwoFactorEnabled: boolean;
+  isOAuth: boolean;
+} & DefaultSession["user"];
 
 // extending the session type here
 declare module "next-auth" {
   interface Session {
-    user: {
-      role: UserRole;
-    } & DefaultSession["user"];
+    user: ExtendedUser;
   }
 }
 
@@ -40,13 +46,30 @@ export const { signIn, signOut, auth, handlers } = NextAuth({
 
       if (!existingUser?.emailVerified) return false;
 
-      // TODO
+      if (existingUser.isTwoFactorEnabled) {
+        const confirmation = await getTwoFactorConfirmationByUserId(
+          existingUser.id,
+        );
+        if (!confirmation) return false;
+
+        await db.twoFactorConfirmation.delete({
+          where: { id: confirmation.id },
+        });
+      }
 
       return true;
     },
     async session({ token, session }) {
       if (token.role && session.user) {
         session.user.role = token.role as UserRole;
+      }
+      if (session.user) {
+        session.user.isTwoFactorEnabled = token.isTwoFactorEnabled as boolean;
+      }
+      if (session.user) {
+        session.user.name = token.name;
+        session.user.isOAuth = token.isOAuth as boolean;
+        if (token.email) session.user.email = token.email;
       }
 
       return session;
@@ -58,7 +81,13 @@ export const { signIn, signOut, auth, handlers } = NextAuth({
       const existingUser = await getUserById(token.sub);
 
       if (!existingUser) return token;
+      const existingAccount = await getAccountByUserId(existingUser.id);
+
+      token.name = existingUser.name;
+      token.isOAuth = !!existingAccount;
+      token.email = existingUser.email;
       token.role = existingUser.role;
+      token.isTwoFactorEnabled = existingUser.isTwoFactorEnabled;
 
       return token;
     },
